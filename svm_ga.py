@@ -13,25 +13,17 @@ from sklearn.preprocessing import StandardScaler, label_binarize
 from sklearn.utils import resample, class_weight
 from sklearn.svm import SVC
 from sklearn.externals import joblib  # to save model to pickle file
-
 sns.set()  # set beautiful style for graphs
 
-data_path = '/Users/Dimasik007/Desktop/Programming/PyCharm/Dissertation/svm_ga_system/data/'
 
-# load csv file to df
-EU = pd.read_csv(data_path+'EURUSD_1H.csv', index_col=['Time'], usecols=['Time', 'Close', 'Volume'],
-                 parse_dates=True, infer_datetime_format=True, dayfirst=True)
-
-EUR_USD = EU.copy()
-
-
-def get_TIs( df, dropnan=True ):
+def get_tis( df, dropnan=True, drop_vol=True ):
     """ calculate technical indicators with ta-lib
     requires a df with a column named "Close" """
-
     # to delete rows which have 0 volume / delete weekends
-    df = df[ (df[ [ 'Volume' ] ] != 0).all( axis=1 ) ]
-
+    print( "dropping rows with zero volume from dataFrame {}".format( df.shape ) )
+    if drop_vol:
+        df = df[ (df[ [ 'Volume' ] ] != 0).all( axis=1 ) ]
+    print( "creating technical indicators" )
     df[ 'RSI' ] = ta.RSI( df.Close.values, timeperiod=14 )
     df[ 'ROC' ] = ta.ROC( df.Close.values, timeperiod=10 )
     df[ 'SMA' ] = ta.SMA( df.Close.values, timeperiod=30 )
@@ -39,13 +31,15 @@ def get_TIs( df, dropnan=True ):
     df[ 'WMA' ] = ta.WMA( df.Close.values, timeperiod=30 )
     df[ 'MACD' ], df[ 'macdSignal' ], df[ 'macdHist' ] = ta.MACD( df.Close.values, fastperiod=12,
                                                                   slowperiod=26, signalperiod=9 )
-
+    print( "done {}".format( df.shape ) )
+    print( "creating market types" )
     # to label different market types ( 1 - Uptrend, 0 - Sideways, -1 - Downtrend )
     df[ 'mType' ] = np.where( df[ 'ROC' ] > 0.5, 1, (np.where( df[ 'ROC' ] < -0.5, -1, 0 )) )
-
+    print( "done {}".format( df.shape ) )
+    print( "dropping NaN values" )
     if dropnan:
         df.dropna( inplace=True )
-
+    print( "returning dataFrame: {}  from get_tis func".format( df.shape ) )
     return df
 
 
@@ -68,27 +62,14 @@ def trading_rules( df ):
     return df
 
 
-EUR_USD = get_TIs(EUR_USD, True)
-EUR_USD = trading_rules(EUR_USD)
-
-
 # OPTIMISATION LAYER SVM_______________________________________________________________________________________
 def normalise( x ):
     """ standardize features by removing the mean and scaling to unit variance """
     scaler = StandardScaler()
     x_norm = scaler.fit_transform( x.values )
     x_norm = pd.DataFrame( x_norm, index=x.index, columns=x.columns )
-
+    print( "normalised data {}".format( x_norm.shape ) )
     return x_norm
-
-
-def make_lags( df, max_lag, min_lag=0, separator='_' ):
-    """ shift values in given columns of dataFrame """
-    values = []
-    for i in range( min_lag, max_lag + 1 ):
-        values.append( df.shift( i ).copy() )
-        values[ -1 ].columns = [ c + separator + str( i ) for c in df.columns ]
-    return pd.concat( values, axis=1 )
 
 
 def create_features_labels( df, price_seq=True, hm_lags=99 ):
@@ -97,54 +78,99 @@ def create_features_labels( df, price_seq=True, hm_lags=99 ):
     if price_seq==True, return df with hm_lags price sequences and corresponding to price 0 market type
     else returns a dataFrame with sequences of technical indicators and market type shifted by 1
     """
-
-    if price_seq:
-        j = make_lags( df[[ 'Close' ] ], hm_lags )  # create df with 100 price sequences
-        j[ 'mType' ] = df[ 'mType' ]  # label price sequences with market type
-        j.dropna(inplace=True)  # drop NaN values left after shifting values
-        return j
-    else:
-        df[ 'mType1' ] = df['mType'].shift(1).fillna(9).astype(int)  # create new column with shifted market type
+    print( "create features and labels" )
+    df = get_tis( df, dropnan=True, drop_vol=True )
+    # TODO just in case, try using market type shifted by 1
+    if price_seq:  # type 1 - use hm_lags price sequences to predict market next day
+        print( "creating dataset with price sequences" )
+        for i in range( 0, hm_lags ):
+            df[ "Close_{}".format( str( i + 1 ) ) ] = df[ "Close" ].shift( i + 1 )
+        print( "done, df: {}; dropping extra columns next".format( df.shape ) )
+        df.dropna( inplace=True )  # drop NaN values left after shifting values
+        df.drop( [ 'RSI', 'ROC', 'SMA', 'EMA', 'WMA', 'MACD', 'macdSignal', 'macdHist', 'Volume' ], axis=1,
+                 inplace=True )
+        print( "returning price sequences: {} from create features and labels func".format( df.shape ) )
+        return df
+    else:  # type 2 - use technical indicators to predict market next day
+        print( "creating dataset with Technical Indicators" )
+        df[ 'mType1' ] = df[ 'mType' ].shift( 1 ).fillna( 9 ).astype(
+            int )  # create new column with shifted market type
         df = df[( df[[ 'mType1' ]] != 9).all(axis=1)]  # drop rows left after shifting market type
-        df = df[[ 'RSI', 'ROC', 'SMA', 'EMA', 'WMA', 'MACD', 'macdSignal', 'macdHist', 'mType1' ]]
+        df.drop( [ 'Close', 'Volume', 'mType' ], axis=1, inplace=True )
+        # df = df[[ 'RSI', 'ROC', 'SMA', 'EMA', 'WMA', 'MACD', 'macdSignal', 'macdHist', 'mType1' ]]
+        print( "returning technical indicators and market type from create features and labels func {}".format(
+            df.shape ) )
         return df
 
 
-price_seq = create_features_labels(EUR_USD, price_seq=True)  # type 1
-tis_seq = create_features_labels(EUR_USD, price_seq=False)  # type 2
-
 # machine learning here________________________________________________________________________________________
-# preparing data for ml
-data_train = a[:'2005-12-31']  # create training df
-y = data_train['mType1'].values  # target which we predict ( .values to transform it to ndarray )
-# y = label_binarize(y, classes=[-1, 0, 1])  ######### probably not needed
-X = data_train.drop(['mType', 'mType1', 'Close', 'Volume'], axis=1)  # data TI type 2
-X = normalise(X)  # normalise X ( leads to x3 accuracy improvement )
-X = X.values  # change type to ndarray
-# X = data_train[['RSI', 'ROC', 'SMA', 'EMA', 'WMA', 'MACD', 'macdSignal', 'macdHist']]  # data TI sequences type 2
+def get_data_for_ml( df, use_prices=True, start_testing=None, end_testing='2006-01-01', validation_start='2006-01-02',
+                     validation_end='2007-01-01' ):
+    if use_prices:  # predict future market direction with price sequences
+        print( "preparing price sequences data for machine learning" )
+        data_for_ml = create_features_labels( df, price_seq=True, hm_lags=99 )
+        data_train = data_for_ml[ start_testing:end_testing ]  # create training dataFrame
+        y = data_train[ 'mType' ].values  # target which we predict ( .values to transform it to ndarray )
+        X = data_train.drop( [ 'mType' ], axis=1 )  # drop target column
+        X = normalise( X )  # normalise X ( leads to x3 accuracy improvement )
+        X = X.values  # change type to ndarray
+    else:  # predict future market direction with technical indicators
+        print( "preparing TIs data for machine learning" )
+        data_for_ml = create_features_labels( df, price_seq=False )
+        data_train = data_for_ml[ start_testing:end_testing ]
+        y = data_train[ 'mType1' ].values
+        X = data_train.drop( [ 'mType1' ], axis=1 )  # data TI type 2
+        X = normalise( X )
+        X = X.values
 
-# validation set
-data_val = a['2005-01-01':'2006-12-31']
-y_val = data_val['mType1'].values  # target
-X_val = data_val.drop(['mType', 'mType1', 'Close', 'Volume'], axis=1)  # use TI type 2
-# X_val = data_val[['Open', 'High', 'Low', 'Close']]  # data price sequences type 1
-X_val = normalise(X_val)
-X_val = X_val.values
-# TODO don't forget to normalise the data X_val
-# X_val = data_val[['RSI', 'ROC', 'SMA', 'EMA', 'WMA', 'MACD', 'macdSignal', 'macdHist']]  # data TI sequences type 2
+    # create validation set
+    print( "creating validation set" )
+    data_val = data_for_ml[ validation_start:validation_end ]
+    if use_prices:
+        y_val = data_val[ 'mType' ].values
+        X_val = data_val.drop( [ 'mType' ], axis=1 )
+        X_val = normalise( X_val )
+        X_val = X_val.values
+    else:
+        y_val = data_val[ 'mType1' ].values
+        X_val = data_val.drop( [ 'mType1' ], axis=1 )  # use TI type 2
+        X_val = normalise( X_val )
+        X_val = X_val.values
 
-# splitting data for training and testing
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-print("Training data: {} and target: {}".format(X_train.shape, y_train.shape))
-print("Testing data: {} and target: {}".format(X_test.shape, y_test.shape))
+    # splitting data for training and testing
+    print( "splitting data for training and testing sets" )
+    X_train, X_test, y_train, y_test = train_test_split( X, y, test_size=0.2, shuffle=False )
+    print( "Training data: {} and target: {}".format( X_train.shape, y_train.shape ) )
+    print( "Testing data: {} and target: {}".format( X_test.shape, y_test.shape ) )
 
-# adjust weights of the classes to account for unbalanced data
-class_weights = class_weight.compute_class_weight('balanced', np.unique(y_train), y_train)
-print(class_weights)  # use that in class_weight parameter of the classifier, as it accepts only dict
+    # adjust weights of the classes to account for unbalanced data
+    class_weights = class_weight.compute_class_weight( 'balanced', np.unique( y_train ), y_train )
 
-# check the sum of each value
-unique, counts = np.unique(y, return_counts=True)
-dict(zip(unique, counts))
+    # check the sum of each value
+    unique, counts = np.unique( y, return_counts=True )
+    print( "Counts of labels" )
+    print( dict( zip( unique, counts ) ) )
+    # use that in class_weight parameter of the classifier, as it accepts only dict
+    print( "Class weights: {}".format( class_weights ) )
+
+    return X_train, X_test, y_train, y_test, X_val, y_val
+
+
+# load csv file to df
+EU = pd.read_csv( 'data/EURUSD_1H.csv', index_col=[ 'Time' ], usecols=[ 'Time', 'Close', 'Volume' ], parse_dates=True,
+                  infer_datetime_format=True, dayfirst=True )
+EUR_USD = EU.copy()
+
+# prepare type 1 data
+X_train, X_test, y_train, y_test, X_val, y_val = get_data_for_ml( df=EUR_USD, use_prices=True, end_testing='2006-01-01',
+                                                                  validation_start='2006-01-02',
+                                                                  validation_end='2007-01-01' )
+
+# prepare type 2 data
+X_train, X_test, y_train, y_test, X_val, y_val = get_data_for_ml( df=EUR_USD, use_prices=False,
+                                                                  end_testing='2006-01-01',
+                                                                  validation_start='2006-01-02',
+                                                                  validation_end='2007-01-01' )
 
 # specify parameters to try for classifier
 svc_parameters = [{'kernel': ['poly'], 'degree': [2, 3, 4], 'C': [1, 10, 100, 1000],
@@ -154,23 +180,24 @@ svc_parameters = [{'kernel': ['poly'], 'degree': [2, 3, 4], 'C': [1, 10, 100, 10
                   ]  # DON'T USE gamma=1 in poly kernel
 
 # TODO try using ['accuracy', 'f1'] in scoring parameter
+score_eval = [ 'accuracy', 'f1' ]
 # do exhaustive search for best parameters to find those that max accuracy score and do K-fold with K=5
 clf = GridSearchCV(SVC(class_weight={-1: 3.74030354, 0: 0.40926285, 1: 3.45752143}),
                    param_grid=svc_parameters, cv=5, scoring='accuracy',
                    n_jobs=-1, refit=True, return_train_score=False, verbose=3)
 
 # fit input (X_train: price sequences / TIs) to target (y_train: 1, 0, -1)
-clf.fit(X_train, y_train)
+clf.fit( X_train, y_train )
 
-# print all the results
-clf.score(X_train, y_train)
-print("Best parameters set found on development set:")
-print(clf.best_params_)
+# print results
+print( "Accuracy on training data {0:0.2f} %".format( clf.score( X_train, y_train ) ) )
+print( "Best parameters set found on development set:" )
+print( clf.best_params_ )
 print()
-print("Grid scores on training set:")
-means = clf.cv_results_['mean_test_score']
-stds = clf.cv_results_['std_test_score']
-for mean, std, params in zip(means, stds, clf.cv_results_['params']):
+print( "Grid scores on training set:" )
+means = clf.cv_results_[ 'mean_test_score' ]
+stds = clf.cv_results_[ 'std_test_score' ]
+for mean, std, params in zip( means, stds, clf.cv_results_[ 'params' ] ):
     print("%0.3f (+/-%0.03f) for %r"
           % (mean, std * 2, params))
 print()
@@ -191,12 +218,7 @@ joblib.dump(clf.best_estimator_, 'svc_prices.pkl', compress=1)  # save model tra
 
 clf2 = joblib.load('svc_ti.pkl')  # load classifier to a variable
 
-
-#####################################################################################
-count = 100
-for i in range(0, count):
-    b["Close_{}".format(str(i+1))] = b["Close"].shift(i+1)
-
+# predict validation set
 y_pred2 = clf2.predict(X_val)
 acc2 = accuracy_score(y_val, y_pred2)
 print('Support Vector Machine Classifier\n {}\n'.format(classification_report(y_val, y_pred2,
@@ -206,23 +228,7 @@ print('Support Vector Machine Classifier\n {}\n'.format(classification_report(y_
 print("Accuracy Score: {0:0.2f} %".format(acc2 * 100))
 
 
-# TODO print evaluation for non binary labels
-def scores(model, X, y):
-    # print results
-    # for model in models:
-    y_pred = model.predict(X)
-    prec = precision_score(y, y_pred)
-    rec = recall_score(y, y_pred)
-    acc = accuracy_score(y, y_pred)
-    f1 = f1_score(y, y_pred)
-    print("Predictions: {}".format(y_pred[0:5]))
-    print("Precision score: {}".format(prec))
-    print("Recall score: {}".format(rec))
-    print("Accuracy Score: {0:0.2f} %".format(acc * 100))
-    print("F1 Score: {0:0.4f}".format(f1))
 
-
-# rebalance data set
 """
 def rebalance(unbalanced_data):
 
@@ -257,20 +263,18 @@ Kcv = KFold(n_splits=5)
 prediction_cv = cross_val_score(clf, X, y, cv=cv)
 """
 
-# print scores of clf.predict ( fix non binary labels )
-scores(clf, X_test, y_test)
 
 # plotting TIs and closing price on one plot
 f, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(20, 10))  # create figure with 2 subplots with shared x axis
 f.subplots_adjust(hspace=0)  # remove space between subplots
-x1 = EUR_USD['2017-01-01':'2018-06-01'][['Close']].resample('W').mean()  # plot EUR/USD price resampled weekly
+x1 = EUR_USD[ '2017-01-01':'2018-06-01' ][ [ 'Close' ] ].resample( 'W' ).mean()  # plot EUR/USD price resampled weekly
 ax1.plot(x1)
 ax1.set_title('EUR/USD price and ROC indicator', fontsize=16)
 ax1.set_ylabel('EUR/USD price', fontsize=12)
 
-x2 = EUR_USD['2017-01-01':'2018-06-01'][['ROC']].resample('W').mean()
-ax2.set_ylabel('9 ROC', fontsize=12)
-ax2.set_xlabel('Year', fontsize=16)
+x2 = EUR_USD[ '2017-01-01':'2018-06-01' ][ [ 'ROC' ] ].resample( 'W' ).mean()
+ax2.set_ylabel( '9 ROC', fontsize=12 )
+ax2.set_xlabel( 'Year', fontsize=16 )
 ax2.plot(x2)
 
 plt.show()
@@ -340,11 +344,20 @@ EUR_USD['2015-01-01':'2017-01-01'][['mType']].plot(ax=ax2)
 plt.show()
 """
 
+
+def make_lags( df, max_lag, min_lag=0, separator='_' ):
+    """ shift values in given columns of dataFrame """
+    data = [ ]
+    for i in range( min_lag, max_lag + 1 ):
+        data.append( df.shift( i ).copy() )
+        data[ -1 ].columns = [ c + separator + str( i ) for c in df.columns ]
+    print( "returning values from make_lags func {}" )
+    return pd.concat( data, axis=1 )
+
 # doesn't work now
 # alternative implementation to speed up classification process by
 # training several classifiers on different subsets of data
 n_estimators = 10
-score_eval = ['accuracy', 'f1']
 clf3 = GridSearchCV(BaggingClassifier(SVC(class_weight={-1: 3.74030354, 0: 0.40926285, 1: 3.45752143}),
                                       max_samples=1.0 / n_estimators, n_estimators=n_estimators),
                     param_grid=svc_parameters, cv=5, scoring='accuracy',
