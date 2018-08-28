@@ -142,7 +142,7 @@ def extract_featuresets(ticker):
     df.dropna(inplace=True)
 
     df_vals = df[[ticker for ticker in tickers]].pct_change()
-    # replace infinite data with nan (eg after pct_change with 0)
+    # replace infinite data with 0 (eg after pct_change with 0)
     df_vals = df_vals.replace([np.inf, -np.inf], 0)
     df_vals.fillna(0, inplace=True)
 
