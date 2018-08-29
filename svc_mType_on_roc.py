@@ -1,5 +1,6 @@
 import warnings
-warnings.filterwarnings('always')  # "error", "ignore", "always", "default", "module" or "once"
+
+warnings.filterwarnings( 'always' )  # "error", "ignore", "always", "default", "module" or "once"
 import math
 import pandas as pd
 import numpy as np
@@ -35,11 +36,17 @@ def get_tis( df, dropnan=True, drop_vol=True ):
     df[ 'SMA' ] = ta.SMA( df.Close.values, timeperiod=30 )
     df[ 'EMA' ] = ta.EMA( df.Close.values, timeperiod=30 )
     df[ 'WMA' ] = ta.WMA( df.Close.values, timeperiod=30 )
-    df[ 'MACD' ], df[ 'macdSignal' ], df[ 'macdHist' ] = ta.MACD( df.Close.values, fastperiod=12,
-                                                                  slowperiod=26, signalperiod=9 )
+    df[ 'MACD' ], df[ 'macdSignal' ], df[ 'macdHist' ] = ta.MACD( df.Close.values, fastperiod=12, slowperiod=26,
+                                                                  signalperiod=9 )
+    print( "done {}".format( df.shape ) )
+
+    print( "creating market types" )
+    # to label different market types ( 1 - Uptrend, 0 - Sideways, -1 - Downtrend )
+    df[ 'mType' ] = np.where( df[ 'ROC' ] > 0.5, 1, (np.where( df[ 'ROC' ] < -0.5, -1, 0 )) )
     print( "done {}".format( df.shape ) )
 
     print( "dropping NaN values" )
+
     if dropnan:
         df.dropna( inplace=True )
     print( "returning dataFrame: {}  from get_tis func".format( df.shape ) )
@@ -86,23 +93,17 @@ def create_features_labels( df, price_seq=True, hm_lags=99 ):
     print( "create features and labels" )
     df = get_tis( df, dropnan=True, drop_vol=True )
 
-    # getting price percent changes in the next hour
-    df[ 'Close_pctch' ] = df.Close.pct_change().shift( -1 )
-
-    print( "creating market directions" )
-    # to label different market types ( 1 - Uptrend, 0 - Sideways, -1 - Downtrend )
-    df[ 'bsh_rule' ] = np.where( df[ 'Close_pctch' ] > 0.001, 1, (np.where( df[ 'Close_pctch' ] < -0.001, -1, 0 )) )
-    print( "done {}".format( df.shape ) )
-
     if price_seq:  # type 1 - use hm_lags price sequences to predict market next day
         print( "creating dataset with price sequences" )
         for i in range( 0, hm_lags ):
             df[ "Close_{}".format( str( i + 1 ) ) ] = df[ "Close" ].shift( i + 1 )
 
         print( "done, df: {}; dropping extra columns next".format( df.shape ) )
+        df[ 'mType1' ] = df[ 'mType' ].shift( 1 ).fillna( 9 ).astype( int )  # create shifted market type column
+        df = df[ (df[ [ 'mType1' ] ] != 9).all( axis=1 ) ]  # drop rows left after shifting market type
 
         df.dropna( inplace=True )  # drop NaN values left after shifting values
-        df.drop( [ 'RSI', 'ROC', 'SMA', 'EMA', 'WMA', 'MACD', 'macdSignal', 'macdHist', 'Volume' ], axis=1,
+        df.drop( [ 'RSI', 'ROC', 'SMA', 'EMA', 'WMA', 'MACD', 'macdSignal', 'macdHist', 'Volume', 'mType' ], axis=1,
                  inplace=True )  # drop TI and previous market type
 
         print( "returning price sequences: {} from create features and labels func".format( df.shape ) )
@@ -110,9 +111,11 @@ def create_features_labels( df, price_seq=True, hm_lags=99 ):
 
     else:  # type 2 - use technical indicators to predict market next day
         print( "creating dataset with Technical Indicators" )
-        df.drop( [ 'Close', 'Volume' ], axis=1, inplace=True )
+        df[ 'mType1' ] = df[ 'mType' ].shift( 1 ).fillna( 9 ).astype( int )  # create shifted market type column
+        df = df[ (df[ [ 'mType1' ] ] != 9).all( axis=1 ) ]  # drop rows left after shifting market type
+        df.drop( [ 'Close', 'Volume', 'mType' ], axis=1, inplace=True )
         df.dropna( inplace=True )
-        print( "returning TIs and price changes from create features and labels func {}".format( df.shape ) )
+        print( "returning TIs and market type from create features and labels func {}".format( df.shape ) )
         return df
 
 
@@ -133,8 +136,8 @@ def get_data_for_ml( df, use_prices=True, start_testing=None, end_testing='2006-
         print( "preparing price sequences data for machine learning" )
         data_for_ml = create_features_labels( df, price_seq=True, hm_lags=99 )
         data_train = data_for_ml[ start_testing:end_testing ]  # create training dataFrame
-        y = data_train[ 'bsh_rule' ].values  # target which we predict ( .values to transform it to ndarray )
-        X = data_train.drop( [ 'bsh_rule' ], axis=1 )  # drop target column
+        y = data_train[ 'mType1' ].values  # target which we predict ( .values to transform it to ndarray )
+        X = data_train.drop( [ 'mType1' ], axis=1 )  # drop target column
         X = normalise( X )  # normalise X ( leads to x3 accuracy improvement )
         X = X.values  # change type to ndarray
 
@@ -142,8 +145,8 @@ def get_data_for_ml( df, use_prices=True, start_testing=None, end_testing='2006-
         print( "preparing TIs data for machine learning" )
         data_for_ml = create_features_labels( df, price_seq=False )
         data_train = data_for_ml[ start_testing:end_testing ]
-        y = data_train[ 'bsh_rule' ].values
-        X = data_train.drop( [ 'bsh_rule' ], axis=1 )  # data TI type 2
+        y = data_train[ 'mType1' ].values
+        X = data_train.drop( [ 'mType1' ], axis=1 )  # data TI type 2
         X = normalise( X )
         X = X.values
 
@@ -151,13 +154,13 @@ def get_data_for_ml( df, use_prices=True, start_testing=None, end_testing='2006-
     print( "creating validation set" )
     data_val = data_for_ml[ validation_start:validation_end ]
     if use_prices:
-        y_val = data_val[ 'bsh_rule' ].values
-        X_val = data_val.drop( [ 'bsh_rule' ], axis=1 )
+        y_val = data_val[ 'mType1' ].values
+        X_val = data_val.drop( [ 'mType1' ], axis=1 )
         X_val = normalise( X_val )
         X_val = X_val.values
     else:
-        y_val = data_val[ 'bsh_rule' ].values
-        X_val = data_val.drop( [ 'bsh_rule' ], axis=1 )  # use TI type 2
+        y_val = data_val[ 'mType1' ].values
+        X_val = data_val.drop( [ 'mType1' ], axis=1 )  # use TI type 2
         X_val = normalise( X_val )
         X_val = X_val.values
 
@@ -187,24 +190,23 @@ EUR_USD = EU.copy()
 
 # prepare type 1 data
 X_train, X_test, y_train, y_test, X_val, y_val = get_data_for_ml( df=EUR_USD, use_prices=True,
-                                                                  start_testing='2014-01-01', end_testing='2016-01-01',
-                                                                  validation_start='2016-01-02',
-                                                                  validation_end='2017-01-01' )
+                                                                  start_testing='2011-01-01', end_testing='2016-01-01',
+                                                                  validation_start='2016-01-02', validation_end=None )
 
 # prepare type 2 data
 X_train, X_test, y_train, y_test, X_val, y_val = get_data_for_ml( df=EUR_USD, use_prices=False,
                                                                   start_testing='2007-01-01', end_testing='2016-01-01',
                                                                   validation_start='2016-01-02', validation_end=None )
 
-# {'kernel': ['poly'], 'degree': [2, 3, 4], 'C': [1, 10, 100, 1000], 'gamma': [ 0.001, 0.01, 0.1 ] },
 # specify parameters to try for classifier
 svc_parameters = [
-                   {'kernel': ['rbf'], 'C': [1, 10, 100, 1000], 'gamma': [0.0001, 0.001, 0.01, 0.1, 1]},
-                   {'kernel': ['linear'], 'C': [1, 10, 100, 1000]} ]  # DON'T USE gamma=1 in poly kernel and 0.0001
+    { 'kernel': [ 'poly' ], 'degree': [ 2, 3, 4 ], 'C': [ 1, 10, 100, 1000 ], 'gamma': [ 0.001, 0.01, 0.1 ] },
+    { 'kernel': [ 'rbf' ], 'C': [ 1, 10, 100, 1000 ], 'gamma': [ 0.0001, 0.001, 0.01, 0.1, 1 ] },
+    { 'kernel': [ 'linear' ], 'C': [ 1, 10, 100, 1000 ] } ]  # DON'T USE gamma=1 in poly kernel and 0.0001
 
 # do exhaustive search for best parameters to find those that max accuracy score and do K-fold with K=5
 # manually input class weights based on the output from get_data_for_ml function
-clf = GridSearchCV( SVC( class_weight={ -1: 3.26846644, 0: 0.41232676, 1: 3.72044388 }, cache_size=400 ),
+clf = GridSearchCV( SVC( class_weight={ -1: 4.81567265, 0: 0.38437245, 1: 5.24379992 }, cache_size=400 ),
                     param_grid=svc_parameters, cv=5, scoring='accuracy', n_jobs=-1, refit=True,
                     return_train_score=False, verbose=42 )
 
@@ -220,39 +222,33 @@ print( "Grid scores on training set:" )
 means = clf.cv_results_[ 'mean_test_score' ]
 stds = clf.cv_results_[ 'std_test_score' ]
 for mean, std, params in zip( means, stds, clf.cv_results_[ 'params' ] ):
-    print("%0.3f (+/-%0.03f) for %r"
-          % (mean, std * 2, params))
+    print( "%0.3f (+/-%0.03f) for %r" % (mean, std * 2, params) )
 print()
 
 # predict testing dataset
-y_pred = clf.predict(X_test)
-acc = accuracy_score(y_test, y_pred)
-print('Support Vector Machine Classifier\n {}\n'.format(classification_report(y_test, y_pred,
-                                                                              target_names=['Downtrend',
-                                                                                            'Sideways',
-                                                                                            'Uptrend'])))
-print("Accuracy Score: {0:0.2f} %".format(acc * 100))
+y_pred = clf.predict( X_test )
+acc = accuracy_score( y_test, y_pred )
+print( 'Support Vector Machine Classifier\n {}\n'.format(
+    classification_report( y_test, y_pred, target_names=[ 'Downtrend', 'Sideways', 'Uptrend' ] ) ) )
+print( "Accuracy Score: {0:0.2f} %".format( acc * 100 ) )
 MSE = mean_squared_error( y_test, y_pred )
 print( "Mean Squared Error (MSE): {}".format( MSE ) )
 print( "Root Mean Square Error (RMSE): {}".format( math.sqrt( MSE ) ) )
 print( "Best score achieved by classifier: {}".format( clf.best_score_ ) )
-print(clf.best_estimator_)
+print( clf.best_estimator_ )
 # compress is used to put all the files into a single pickle file
-joblib.dump(clf.best_estimator_, 'svc_ti.pkl', compress=1)  # save model trained on TI to pkl file
+joblib.dump( clf.best_estimator_, 'svc_ti.pkl', compress=1 )  # save model trained on TI to pkl file
 joblib.dump( clf.best_estimator_, 'svc_prices_mType.pkl',
              compress=1 )  # save model trained on price sequences to pkl file
 
 clf2 = joblib.load( 'svc_prices_mType.pkl' )  # load classifier to a variable
 
-
 # predict validation set
-y_pred2 = clf.predict( X_val )
-acc2 = accuracy_score(y_val, y_pred2)
-print('Support Vector Machine Classifier\n {}\n'.format(classification_report(y_val, y_pred2,
-                                                                              target_names=['Downtrend',
-                                                                                            'Sideways',
-                                                                                            'Uptrend'])))
-print("Accuracy Score: {0:0.2f} %".format(acc2 * 100))
+y_pred2 = clf2.predict( X_val )
+acc2 = accuracy_score( y_val, y_pred2 )
+print( 'Support Vector Machine Classifier\n {}\n'.format(
+    classification_report( y_val, y_pred2, target_names=[ 'Downtrend', 'Sideways', 'Uptrend' ] ) ) )
+print( "Accuracy Score: {0:0.2f} %".format( acc2 * 100 ) )
 MSE_val = mean_squared_error( y_val, y_pred2 )
 print( "Mean Squared Error (MSE): {}".format( MSE_val ) )
 print( "Root Mean Square Error (RMSE): {}".format( math.sqrt( MSE_val ) ) )
@@ -260,7 +256,7 @@ print( "Root Mean Square Error (RMSE): {}".format( math.sqrt( MSE_val ) ) )
 # do trading__________________________________________________________________________________________
 df_for_trading = make_trading_rules( EUR_USD )  # create dataset for trading
 
-backtesting_data = df_for_trading[ '2016-01-02':'2017-01-01' ]  # leave only needed time frame
+backtesting_data = df_for_trading[ '2016-01-02': ]  # leave only needed time frame
 backtesting_data[ 'm_pred' ] = y_pred2  # attach market direction predictions from ml
 
 
@@ -279,7 +275,6 @@ def do_backtest( data ):
     data[ 'Currency' ] = 'currency'
     # crypto_commission = 0.001  # 0.10 % e.g. on Poloniex ( - equity_amount * crypto_commission )
 
-    # combining trading rules together
     data[ 'Trade' ] = np.where( (data[ 'Vote' ] >= 0.8) & (data[ 'm_pred' ] == 1), 1,
                                 np.where( (data[ 'Vote' ] <= -0.8) & (data[ 'm_pred' ] == -1), -1, 0 ) )
 
@@ -323,8 +318,6 @@ def do_backtest( data ):
 
 backtested_df, new_order_book, eq = do_backtest( backtesting_data )
 
-
-
 """
 def rebalance(unbalanced_data):
 
@@ -359,19 +352,18 @@ Kcv = KFold(n_splits=5)
 prediction_cv = cross_val_score(clf, X, y, cv=cv)
 """
 
-
 # plotting TIs and closing price on one plot
-f, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(20, 10))  # create figure with 2 subplots with shared x axis
-f.subplots_adjust(hspace=0)  # remove space between subplots
+f, (ax1, ax2) = plt.subplots( 2, 1, sharex=True, figsize=(20, 10) )  # create figure with 2 subplots with shared x axis
+f.subplots_adjust( hspace=0 )  # remove space between subplots
 x1 = EUR_USD[ '2017-01-01':'2018-06-01' ][ [ 'Close' ] ].resample( 'W' ).mean()  # plot EUR/USD price resampled weekly
-ax1.plot(x1)
-ax1.set_title('EUR/USD price and ROC indicator', fontsize=16)
-ax1.set_ylabel('EUR/USD price', fontsize=12)
+ax1.plot( x1 )
+ax1.set_title( 'EUR/USD price and ROC indicator', fontsize=16 )
+ax1.set_ylabel( 'EUR/USD price', fontsize=12 )
 
 x2 = EUR_USD[ '2017-01-01':'2018-06-01' ][ [ 'ROC' ] ].resample( 'W' ).mean()
 ax2.set_ylabel( '9 ROC', fontsize=12 )
 ax2.set_xlabel( 'Year', fontsize=16 )
-ax2.plot(x2)
+ax2.plot( x2 )
 
 plt.show()
 
@@ -450,15 +442,16 @@ def make_lags( df, max_lag, min_lag=0, separator='_' ):
     print( "returning values from make_lags func {}" )
     return pd.concat( data, axis=1 )
 
+
 # doesn't work now
 # alternative implementation to speed up classification process by
 # training several classifiers on different subsets of data
 n_estimators = 10
 clf3 = GridSearchCV( OneVsRestClassifier(
-    BaggingClassifier( SVC( class_weight={ -1: 3.48339912, 0: 0.41015337, 1: 3.6388552 }, cache_size=400 ),
-                       max_samples=1.0 / n_estimators, n_estimators=n_estimators, bootstrap=False ) ),
-                     param_grid=svc_parameters, cv=5, scoring='accuracy', n_jobs=-1, refit=True,
-                     return_train_score=False, verbose=42 )
+        BaggingClassifier( SVC( class_weight={ -1: 3.48339912, 0: 0.41015337, 1: 3.6388552 }, cache_size=400 ),
+                           max_samples=1.0 / n_estimators, n_estimators=n_estimators, bootstrap=False ) ),
+        param_grid=svc_parameters, cv=5, scoring='accuracy', n_jobs=-1, refit=True, return_train_score=False,
+        verbose=42 )
 
 grid = ParameterGrid( { "max_samples":        [ 0.5, 1.0 ], "max_features": [ 1, 2, 4 ], "bootstrap": [ True, False ],
                         "bootstrap_features": [ True, False ] } )
