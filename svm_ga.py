@@ -6,6 +6,10 @@ import numpy as np
 import talib as ta  # financial technical analysis lib
 import seaborn as sns
 import matplotlib.pyplot as plt
+import matplotlib
+
+matplotlib.rc( 'xtick', labelsize=20 )  # set size of the axis font
+matplotlib.rc( 'ytick', labelsize=20 )
 from sklearn.ensemble import BaggingClassifier
 from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score, KFold
 from sklearn.multiclass import OneVsRestClassifier
@@ -19,6 +23,24 @@ from sklearn.metrics import mean_squared_error
 sns.set()  # set beautiful style for graphs
 
 pd.options.mode.chained_assignment = None  # default='warn' disable warnings from pandas
+
+
+def get_crypto_data( symbol, frequency, start=0, tocsv=False ):
+    '''
+    Params: String symbol, int frequency in s = 300,900,1800,7200,14400,86400
+    Returns: time series of ticker in a dataFrame (close, high, low, open, quoteVolume, volume, weightedAverage
+    If tocsv=True creates a csv file, else returns df to assign to variable
+    change needed fileName.csv to account for frequency in conditional
+    '''
+    url = 'https://poloniex.com/public?command=returnChartData&currencyPair=' + symbol + '&end=9999999999&period=' + str(
+        frequency ) + '&start=' + str( start )
+    df = pd.read_json( url )
+    df.set_index( 'date', inplace=True )
+    if tocsv:
+        df.to_csv( symbol + '_daily.csv' )  # add granularity before '.csv'
+    else:
+        return df
+    print( 'Processed: ' + symbol )
 
 
 def get_tis( df, dropnan=True, drop_vol=True ):
@@ -82,6 +104,7 @@ def create_features_labels( df, price_seq=True, hm_lags=99 ):
     prepare dataset fot machine learning
     if price_seq==True, return df with hm_lags price sequences and market type shifted by 1
     else returns a dataFrame with sequences of technical indicators and market type shifted by 1
+    change bsh_rule column values depending on the assets and their volatility e.g. 0.001 to 0.002
     """
     print( "create features and labels" )
     df = get_tis( df, dropnan=True, drop_vol=True )
@@ -116,7 +139,6 @@ def create_features_labels( df, price_seq=True, hm_lags=99 ):
         return df
 
 
-# machine learning here________________________________________________________________________________________
 def get_data_for_ml( df, use_prices=True, start_testing=None, end_testing='2006-01-01', validation_start='2006-01-02',
                      validation_end=None ):
     """
@@ -180,90 +202,6 @@ def get_data_for_ml( df, use_prices=True, start_testing=None, end_testing='2006-
     return X_train, X_test, y_train, y_test, X_val, y_val
 
 
-# load csv file to df
-EU = pd.read_csv( 'data/EURUSD_1H.csv', index_col=[ 'Time' ], usecols=[ 'Time', 'Close', 'Volume' ], parse_dates=True,
-                  infer_datetime_format=True, dayfirst=True )
-EUR_USD = EU.copy()
-
-# prepare type 1 data
-X_train, X_test, y_train, y_test, X_val, y_val = get_data_for_ml( df=EUR_USD, use_prices=True,
-                                                                  start_testing='2014-01-01', end_testing='2016-01-01',
-                                                                  validation_start='2016-01-02',
-                                                                  validation_end='2017-01-01' )
-
-# prepare type 2 data
-X_train, X_test, y_train, y_test, X_val, y_val = get_data_for_ml( df=EUR_USD, use_prices=False,
-                                                                  start_testing='2007-01-01', end_testing='2016-01-01',
-                                                                  validation_start='2016-01-02', validation_end=None )
-
-# {'kernel': ['poly'], 'degree': [2, 3, 4], 'C': [1, 10, 100, 1000], 'gamma': [ 0.001, 0.01, 0.1 ] },
-# specify parameters to try for classifier
-svc_parameters = [
-                   {'kernel': ['rbf'], 'C': [1, 10, 100, 1000], 'gamma': [0.0001, 0.001, 0.01, 0.1, 1]},
-                   {'kernel': ['linear'], 'C': [1, 10, 100, 1000]} ]  # DON'T USE gamma=1 in poly kernel and 0.0001
-
-# do exhaustive search for best parameters to find those that max accuracy score and do K-fold with K=5
-# manually input class weights based on the output from get_data_for_ml function
-clf = GridSearchCV( SVC( class_weight={ -1: 3.26846644, 0: 0.41232676, 1: 3.72044388 }, cache_size=400 ),
-                    param_grid=svc_parameters, cv=5, scoring='accuracy', n_jobs=-1, refit=True,
-                    return_train_score=False, verbose=42 )
-
-# fit input (X_train: price sequences / TIs) to target (y_train: 1, 0, -1)
-clf.fit( X_train, y_train )
-
-# print results
-print( "Accuracy on training data {0:0.2f} %".format( clf.score( X_train, y_train ) ) )
-print( "Best parameters set found on development set:" )
-print( clf.best_params_ )
-print()
-print( "Grid scores on training set:" )
-means = clf.cv_results_[ 'mean_test_score' ]
-stds = clf.cv_results_[ 'std_test_score' ]
-for mean, std, params in zip( means, stds, clf.cv_results_[ 'params' ] ):
-    print("%0.3f (+/-%0.03f) for %r"
-          % (mean, std * 2, params))
-print()
-
-# predict testing dataset
-y_pred = clf.predict(X_test)
-acc = accuracy_score(y_test, y_pred)
-print('Support Vector Machine Classifier\n {}\n'.format(classification_report(y_test, y_pred,
-                                                                              target_names=['Downtrend',
-                                                                                            'Sideways',
-                                                                                            'Uptrend'])))
-print("Accuracy Score: {0:0.2f} %".format(acc * 100))
-MSE = mean_squared_error( y_test, y_pred )
-print( "Mean Squared Error (MSE): {}".format( MSE ) )
-print( "Root Mean Square Error (RMSE): {}".format( math.sqrt( MSE ) ) )
-print( "Best score achieved by classifier: {}".format( clf.best_score_ ) )
-print(clf.best_estimator_)
-# compress is used to put all the files into a single pickle file
-joblib.dump(clf.best_estimator_, 'svc_ti.pkl', compress=1)  # save model trained on TI to pkl file
-joblib.dump( clf.best_estimator_, 'svc_prices_mType.pkl',
-             compress=1 )  # save model trained on price sequences to pkl file
-
-clf2 = joblib.load( 'svc_prices_mType.pkl' )  # load classifier to a variable
-
-
-# predict validation set
-y_pred2 = clf.predict( X_val )
-acc2 = accuracy_score(y_val, y_pred2)
-print('Support Vector Machine Classifier\n {}\n'.format(classification_report(y_val, y_pred2,
-                                                                              target_names=['Downtrend',
-                                                                                            'Sideways',
-                                                                                            'Uptrend'])))
-print("Accuracy Score: {0:0.2f} %".format(acc2 * 100))
-MSE_val = mean_squared_error( y_val, y_pred2 )
-print( "Mean Squared Error (MSE): {}".format( MSE_val ) )
-print( "Root Mean Square Error (RMSE): {}".format( math.sqrt( MSE_val ) ) )
-
-# do trading__________________________________________________________________________________________
-df_for_trading = make_trading_rules( EUR_USD )  # create dataset for trading
-
-backtesting_data = df_for_trading[ '2016-01-02':'2017-01-01' ]  # leave only needed time frame
-backtesting_data[ 'm_pred' ] = y_pred2  # attach market direction predictions from ml
-
-
 def do_backtest( data ):
     """
     function allows to iterate through a dataFrame and place trades according to trading rules.
@@ -273,11 +211,11 @@ def do_backtest( data ):
 
     equity_amount = 100000  # set the amount of capital to trade with
     open_order = 0
-    fx_commission = 1  # 1$ per trade
+    commission = 4
+    # commission = 0.001  # 0.1 % commision on Poloniex and Dukascopy exchanges
     order_book = pd.DataFrame()
     data[ 'Equity' ] = 0
     data[ 'Currency' ] = 'currency'
-    # crypto_commission = 0.001  # 0.10 % e.g. on Poloniex ( - equity_amount * crypto_commission )
 
     # combining trading rules together
     data[ 'Trade' ] = np.where( (data[ 'Vote' ] >= 0.8) & (data[ 'm_pred' ] == 1), 1,
@@ -287,21 +225,31 @@ def do_backtest( data ):
 
         if row[ 'Trade' ] == 1 and open_order == 0:  # check buy signal and if there's no open order
             open_order = 1  # open order and buy with formula below
-            equity_amount = (equity_amount / data.loc[ index, 'Close' ]) - fx_commission
+            equity_amount = (equity_amount / data.loc[ index, 'Close' ]) - commission
             data.at[ index, 'Equity' ] = equity_amount  # record amount of money we have
             data.at[ index, 'Currency' ] = 'EUR'
             order_book = data.loc[ :, [ 'Close', 'Vote', 'm_pred', 'Trade', 'Equity', 'Currency' ] ]
 
         elif row[ 'Trade' ] == -1 and open_order == 1:  # check sell signal
             open_order = 0  # close previously opened order and sell with below formula
-            equity_amount = (equity_amount * data.loc[ index, 'Close' ]) - fx_commission
+            equity_amount = (equity_amount * data.loc[ index, 'Close' ]) - commission
             data.at[ index, 'Equity' ] = equity_amount  # record amount of money we have
             data.at[ index, 'Currency' ] = 'USD'
             order_book = data.loc[ :, [ 'Close', 'Vote', 'm_pred', 'Trade', 'Equity', 'Currency' ] ]
 
-    order_book = order_book[ (order_book[ [ 'Equity' ] ] != 0).all( axis=1 ) ]
+    order_book = order_book[ (order_book[ [ 'Equity' ] ] != 0).all( axis=1 ) ]  # to record only trades
 
-    performance = order_book[ (order_book[ [ 'Trade' ] ] != 1).all( axis=1 ) ]
+    performance = order_book[ (order_book[ [ 'Trade' ] ] != 1).all( axis=1 ) ]  # to track only values in USD
+
+    # sharpe = 10
+    n_trades = len( order_book.index )  # get number of trades performed
+    ann_return = performance.Equity.iloc[ -1 ]  # get last value of the equity column in USD
+    pct_ann_return = (ann_return - 100000) / 100000 * 100
+
+    print( "Final portfolio value: {} USD".format( ann_return ) )
+    print( "Total return: {0:0.2f} %".format( pct_ann_return ) )
+    # print("Sharpe Ratio: {}".format(sharpe))
+    print( "Total number of trades performed: {}".format( n_trades ) )
 
     # plotting performance and prices
     f, (ax1, ax2) = plt.subplots( 2, 1, sharex=True, figsize=(30, 15) )  # figure with 2 subplots and shared x axis
@@ -321,172 +269,96 @@ def do_backtest( data ):
     return data, order_book, equity_amount
 
 
+# load datasets--------------------------------------------------------------------------------------------------------
+EU = pd.read_csv( 'data/EURUSD_1H.csv', index_col=[ 'Time' ], usecols=[ 'Time', 'Close', 'Volume' ], parse_dates=True,
+                  infer_datetime_format=True, dayfirst=True )
+EUR_USD = EU.copy()
+
+# load cryptocurrency dataFrame from poloniex exchange
+# 1420070400 unix timestamp for 1st Jan 2015
+# 1451606400 unix timestamp for 1st Jan 2016
+usdt_eth2h = get_crypto_data( symbol='USDT_ETH', frequency=7200, start=1451606400, tocsv=False )[
+    [ 'close', 'volume' ] ]
+usdt_eth2h.shape
+usdt_eth2h.rename( columns={ 'close': 'Close', 'volume': 'Volume' }, inplace=True )  # change names of columns
+
+usdt_eth30min = get_crypto_data( symbol='USDT_ETH', frequency=1800, start=1451606400, tocsv=False )
+# ---------------------------------------------------------------------------------------------------------------------
+
+# use_prices=True to use 100 price sequences, False - to use Technical indicators
+X_train, X_test, y_train, y_test, X_val, y_val = get_data_for_ml( df=EUR_USD, use_prices=True,
+                                                                  start_testing='2013-01-01', end_testing='2016-01-01',
+                                                                  validation_start='2016-01-02', validation_end=None )
+
+# specify parameters to try for classifier
+svc_parameters = [
+    { 'kernel': [ 'poly' ], 'degree': [ 2, 3, 4 ], 'C': [ 1, 10, 100, 1000 ], 'gamma': [ 0.001, 0.01, 0.1 ] },
+    {'kernel': ['rbf'], 'C': [1, 10, 100, 1000], 'gamma': [0.0001, 0.001, 0.01, 0.1, 1]},
+    {'kernel': ['linear'], 'C': [1, 10, 100, 1000]} ]  # DON'T USE gamma=1 in poly kernel and 0.0001
+
+# do exhaustive search for best parameters to find those that max accuracy score and do K-fold cv with K=5
+# manually input class weights based on the output from get_data_for_ml function
+clf = GridSearchCV( SVC( class_weight={ -1: 4.13175355, 0: 0.39533829, 1: 4.37650602 }, cache_size=400 ),
+                    param_grid=svc_parameters, cv=5, scoring='accuracy', n_jobs=-1, refit=True,
+                    return_train_score=False, verbose=42 )
+
+# fit input (X_train: price sequences / TIs) to target (y_train: 1, 0, -1)
+clf.fit( X_train, y_train )
+
+# print training results
+print( "Accuracy on training data {0:0.2f} %".format( clf.score( X_train, y_train ) ) )
+print( "Best parameters set found on development set:" )
+print( clf.best_params_ )
+print()
+print( "Grid scores on training set:" )
+means = clf.cv_results_[ 'mean_test_score' ]
+stds = clf.cv_results_[ 'std_test_score' ]
+for mean, std, params in zip( means, stds, clf.cv_results_[ 'params' ] ):
+    print("%0.3f (+/-%0.03f) for %r"
+          % (mean, std * 2, params))
+print()
+
+# predict testing dataset
+y_pred = clf.predict(X_test)
+acc = accuracy_score(y_test, y_pred)
+print('Support Vector Machine Classifier\n {}\n'.format(classification_report( y_test, y_pred,
+                                                                               target_names=[ 'NegativeChange',
+                                                                                              'SmallChange',
+                                                                                              'PositiveChange' ] ) ) )
+print("Accuracy Score: {0:0.2f} %".format(acc * 100))
+MSE = mean_squared_error( y_test, y_pred )
+print( "Mean Squared Error (MSE): {}".format( MSE ) )
+print( "Root Mean Square Error (RMSE): {}".format( math.sqrt( MSE ) ) )
+print( "Best score achieved by classifier: {}".format( clf.best_score_ ) )
+print( "Best Estimator: " )
+print(clf.best_estimator_)
+# compress is used to put all the files into a single pickle file
+joblib.dump(clf.best_estimator_, 'svc_ti.pkl', compress=1)  # save model trained on TI to pkl file
+joblib.dump( clf.best_estimator_, 'svc_prices_mType.pkl',
+             compress=1 )  # save model trained on price sequences to pkl file
+
+clf2 = joblib.load( 'svc_prices_mType.pkl' )  # load classifier to a variable
+
+
+# predict validation set
+y_pred2 = clf.predict( X_val )
+acc2 = accuracy_score(y_val, y_pred2)
+print('Support Vector Machine Classifier\n {}\n'.format(classification_report( y_val, y_pred2,
+                                                                               target_names=[ 'NegativeChange',
+                                                                                              'SmallChange',
+                                                                                              'PositiveChange' ] ) ) )
+print("Accuracy Score: {0:0.2f} %".format(acc2 * 100))
+MSE_val = mean_squared_error( y_val, y_pred2 )
+print( "Mean Squared Error (MSE): {}".format( MSE_val ) )
+print( "Root Mean Square Error (RMSE): {}".format( math.sqrt( MSE_val ) ) )
+
+
+# do trading__________________________________________________________________________________________
+df_for_trading = make_trading_rules( EUR_USD )  # create dataset for trading
+
+backtesting_data = df_for_trading[ '2016-01-02': ]  # leave only needed time frame
+backtesting_data.drop( backtesting_data.tail( 1 ).index, inplace=True )  # drop last n rows
+backtesting_data[ 'm_pred' ] = y_pred2  # attach market direction predictions from ml
+
 backtested_df, new_order_book, eq = do_backtest( backtesting_data )
 
-
-
-"""
-def rebalance(unbalanced_data):
-
-    # Separate majority and minority classes
-    data_minority = unbalanced_data[unbalanced_data.target == 0]
-    data_majority = unbalanced_data[unbalanced_data.target == 1]
-
-    # Upsample minority class
-    n_samples = len(data_majority)
-    data_minority_upsampled = resample(data_minority, replace=True, n_samples=n_samples, random_state=5)
-
-    # Combine majority class with upsampled minority class
-    data_upsampled = pd.concat([data_majority, data_minority_upsampled])
-
-    data_upsampled.sort_index(inplace=True)
-
-    # Display new class counts
-    data_upsampled.target.value_counts()
-
-    return data_upsampled
-"""
-
-"""
-clf = OneVsRestClassifier(SVC(kernel='rbf', C=10, gamma=0.001))
-clf.fit(X_train, y_train)
-clf.score(X_train, y_train)
-"""
-
-"""
-# do cross validation
-Kcv = KFold(n_splits=5)
-prediction_cv = cross_val_score(clf, X, y, cv=cv)
-"""
-
-
-# plotting TIs and closing price on one plot
-f, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(20, 10))  # create figure with 2 subplots with shared x axis
-f.subplots_adjust(hspace=0)  # remove space between subplots
-x1 = EUR_USD[ '2017-01-01':'2018-06-01' ][ [ 'Close' ] ].resample( 'W' ).mean()  # plot EUR/USD price resampled weekly
-ax1.plot(x1)
-ax1.set_title('EUR/USD price and ROC indicator', fontsize=16)
-ax1.set_ylabel('EUR/USD price', fontsize=12)
-
-x2 = EUR_USD[ '2017-01-01':'2018-06-01' ][ [ 'ROC' ] ].resample( 'W' ).mean()
-ax2.set_ylabel( '9 ROC', fontsize=12 )
-ax2.set_xlabel( 'Year', fontsize=16 )
-ax2.plot(x2)
-
-plt.show()
-
-# plotting
-"""
-# to plot specific time period
-# EUR_USD['2017-01-01':'2018-06-01'][['close']].plot()
-# plt.show()
-
-# Prepare plot (4 subplots on 1 column)
-fig, (ax1, ax2, ax3, ax4) = plt.subplots(nrows=4, ncols=1, sharex=True)
-# Remove horizontal space between axes
-fig.subplots_adjust(hspace=0)
-
-# set plot size
-fig.set_size_inches(15, 30)
-
-# plotting closing prices
-ax1.set_ylabel('EUR / USD', size=20)
-EUR_USD.Close.resample('M').mean().plot(ax=ax1, c='black')
-# plotting moving averages
-EUR_USD.SMA.resample('M').mean().plot(ax=ax1, c='r', label='SMA30')
-EUR_USD.EMA.resample('M').mean().plot(ax=ax1, c='g', label='EMA30')
-EUR_USD.WMA.resample('M').mean().plot(ax=ax1, c='b', label='WMA30')
-# setting legend
-handles, labels = ax1.get_legend_handles_labels()
-ax1.legend(handles, labels)
-
-# plotting RSI subplot
-ax2.set_ylabel('RSI', size=20)
-EUR_USD.RSI.resample('M').mean().plot(ax=ax2, c='g', label='RSI 14')
-ax2.axhline(y=30, c='b')
-ax2.axhline(y=50, c='black')
-ax2.axhline(y=70, c='b')
-ax2.set_ylim([0, 100])
-handles, labels = ax2.get_legend_handles_labels()
-ax2.legend(handles, labels)
-
-# plotting MACD
-ax3.set_ylabel('MACD: 12, 26, 9', size=20)
-EUR_USD.MACD.resample('M').mean().plot(ax=ax3, color='blue', label='Macd')
-EUR_USD.macdSignal.resample('M').mean().plot(ax=ax3, color='green', label='Signal')
-EUR_USD.macdHist.resample('M').mean().hist(ax=ax3, bins=50, color='grey', label='Hist')
-ax3.axhline(0, lw=2, color='0')
-handles, labels = ax3.get_legend_handles_labels()
-ax3.legend(handles, labels)
-
-# plotting ROC
-ax4.set_ylabel('ROC: 10', size=20)
-ax4.set_xlabel('Year', size=25)
-EUR_USD.ROC.resample('M').mean().plot(ax=ax4, color='r', label='ROC')
-handles, labels = ax4.get_legend_handles_labels()
-ax4.legend(handles, labels)
-
-plt.show()    ___________________________________________________________________________________________________
-"""
-
-# plotting market types and closing price together
-"""
-fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, sharex=True, figsize=(20, 10))
-fig.subplots_adjust(hspace=0)
-ax1.set_ylabel('EUR / USD')
-EUR_USD['2015-01-01':'2017-01-01'][['Close']].plot(ax=ax1, c='g')
-ax2.set_ylabel('Market Type')
-EUR_USD['2015-01-01':'2017-01-01'][['mType']].plot(ax=ax2)
-plt.show()
-"""
-
-
-def make_lags( df, max_lag, min_lag=0, separator='_' ):
-    """ shift values in given columns of dataFrame """
-    data = [ ]
-    for i in range( min_lag, max_lag + 1 ):
-        data.append( df.shift( i ).copy() )
-        data[ -1 ].columns = [ c + separator + str( i ) for c in df.columns ]
-    print( "returning values from make_lags func {}" )
-    return pd.concat( data, axis=1 )
-
-# doesn't work now
-# alternative implementation to speed up classification process by
-# training several classifiers on different subsets of data
-n_estimators = 10
-clf3 = GridSearchCV( OneVsRestClassifier(
-    BaggingClassifier( SVC( class_weight={ -1: 3.48339912, 0: 0.41015337, 1: 3.6388552 }, cache_size=400 ),
-                       max_samples=1.0 / n_estimators, n_estimators=n_estimators, bootstrap=False ) ),
-                     param_grid=svc_parameters, cv=5, scoring='accuracy', n_jobs=-1, refit=True,
-                     return_train_score=False, verbose=42 )
-
-grid = ParameterGrid( { "max_samples":        [ 0.5, 1.0 ], "max_features": [ 1, 2, 4 ], "bootstrap": [ True, False ],
-                        "bootstrap_features": [ True, False ] } )
-
-for base_estimator in [ None, DummyClassifier(), Perceptron(), DecisionTreeClassifier(), KNeighborsClassifier(),
-                        SVC() ]:
-    for params in grid:
-        BaggingClassifier( base_estimator=base_estimator, random_state=rng, **params ).fit( X_train, y_train ).predict(
-                X_test )
-
-    ######################
-    bsh_cond = [ (data[ 'Vote' ] >= 0.8) & (data[ 'm_pred' ] == 1),
-                 (data[ 'Vote' ] <= -0.8) & (data[ 'm_pred' ] == -1) ]
-    choices = [ 1, -1 ]
-    data[ 'Trade' ] = np.select( bsh_cond, choices )
-
-    # SUBSTITUTE COMMISSIONS ACCORDINGLY
-    data[ 'Equity' ] = np.where( data[ 'Trade' ] == 1, (equity_amount / data[ 'Close' ] - fx_commission), (
-        np.where( data[ 'Trade' ] == -1, (equity_amount * data[ 'Close' ] - fx_commission), equity_amount )) )
-    data[ 'Eq_change' ] = data[ 'Equity' ].pct_change().fillna( 0 )
-
-if (row.Trade == 1) & (row.pos == 0):
-    row.pos = row.replace( { 'pos': 1 } )
-    row.Equity = (equity_amount / row.Close) - fx_commission  # substitute commissions accordingly
-    equity_amount = row.Equity
-    order_book = data.loc[ :, [ 'Close', 'Trade', 'Equity' ] ]
-elif (row.Trade == -1) & (row.pos == 1):
-    row.pos = row.replace( { 'pos': 0 } )
-    row.Equity = (equity_amount * row.Close) - fx_commission  # substitute commissions accordingly
-    equity_amount = row.Equity
-    order_book = data.loc[ :, [ 'Close', 'Trade', 'Equity' ] ]
