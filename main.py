@@ -241,4 +241,34 @@ handles, labels = ax4.get_legend_handles_labels()
 ax4.legend(handles, labels)
 
 # plt.show()_____________________________________________________________________________________________________
+
+
+
+# TODO add labels on the graphs and find a way of plotting macd hist
+f, (ax1, ax2, ax3, ax4) = plt.subplots( 4, 1, sharex=True, figsize=(30, 20))
+f.subplots_adjust( hspace=0 )  # remove space between subplots
+
+x1 = backtesting_data[['Close', 'SMA', 'EMA', 'WMA']]
+ax1.plot(x1)
+ax1.set_ylabel('EUR / USD Price', fontsize=23)
+
+x2 = backtesting_data[['RSI']]
+ax2.plot(x2)
+ax2.set_ylabel('RSI', fontsize=23)
+ax2.axhline(y=30, color='green')
+ax2.axhline(y=70, color='red')
+
+x3 = backtesting_data[['MACD', 'macdSignal']]
+x4 = backtesting_data[['macdHist']]
+ax3.plot(x3)
+ax3.hist(x4)
+ax3.set_ylabel('MACD 12, 26, 9', fontsize=23)
+
+x5 = backtesting_data[['ROC']]
+ax4.plot(x5)
+ax4.axhline(y=0, color='grey')
+ax4.set_ylabel('ROC', fontsize=23)
+ax4.set_xlabel('Time', fontsize=25)
+
+plt.show()
 """

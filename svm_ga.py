@@ -6,8 +6,6 @@ import numpy as np
 import talib as ta  # financial technical analysis lib
 import seaborn as sns
 import matplotlib
-matplotlib.rc( 'xtick', labelsize=22 )  # set size of the axis font
-matplotlib.rc( 'ytick', labelsize=22 )
 # from matplotlib import style || # style.use('ggplot')
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split, GridSearchCV
@@ -17,6 +15,9 @@ from sklearn.utils import class_weight
 from sklearn.svm import SVC
 from sklearn.externals import joblib  # to save model to pickle file
 from sklearn.metrics import mean_squared_error
+
+matplotlib.rc( 'xtick', labelsize=22 )  # set size of the axis font
+matplotlib.rc( 'ytick', labelsize=22 )
 
 sns.set()  # set beautiful style for graphs
 pd.options.mode.chained_assignment = None  # default='warn' disable warnings from pandas
@@ -211,8 +212,8 @@ def do_backtest( data ):
     open_order = 0
     open_order_TI = 0
     open_order_svc = 0
-    # commission = 4
-    commission = 0.001  # 0.1 % commision on Poloniex and Dukascopy exchanges
+    commission = 0.00002  # commission per trade on Forex exchanges
+    # commission = 0.0015  # 0.1 % commission per trade on cryptocurrency exchanges
     order_book = pd.DataFrame()
     order_book_TI = pd.DataFrame()
     order_book_svc = pd.DataFrame()
@@ -231,13 +232,12 @@ def do_backtest( data ):
     # trading rule using only svc
     data[ 'Trade_svc' ] = np.where( data[ 'm_pred' ] == 1, 1, np.where( data[ 'm_pred' ] == -1, -1, 0 ) )
 
-    for index, row in data.iterrows():  # using svc and Technical Indiccators
+    for index, row in data.iterrows():  # using svc and Technical Indicators
 
         if row[ 'Trade' ] == 1 and open_order == 0:  # check buy signal and if there's no open order
             open_order = 1  # open order and buy with formula below
             commission_payable = equity_amount * commission  # commission for cryptocurrencies
             equity_amount = ((equity_amount - commission_payable) / data.loc[ index, 'Close' ])
-            # equity_amount = (equity_amount - commission) / data.loc[ index, 'Close' ]  # with FX commission
             data.at[ index, 'Equity' ] = equity_amount  # record amount of money we have
             data.at[ index, 'Currency' ] = 'ETH'  # change to ETH, BTC, EUR, etc.
             order_book = data.loc[ :, [ 'Close', 'Vote', 'm_pred', 'Trade', 'Equity', 'Currency' ] ]
@@ -246,7 +246,6 @@ def do_backtest( data ):
             open_order = 0  # close previously opened order and sell with below formula
             commission_payable = equity_amount * commission
             equity_amount = ((equity_amount - commission_payable) * data.loc[ index, 'Close' ])
-            # equity_amount = (equity_amount - commission) * data.loc[ index, 'Close' ]  # with FX commission
             data.at[ index, 'Equity' ] = equity_amount  # record amount of money we have
             data.at[ index, 'Currency' ] = 'USD'
             order_book = data.loc[ :, [ 'Close', 'Vote', 'm_pred', 'Trade', 'Equity', 'Currency' ] ]
@@ -257,7 +256,6 @@ def do_backtest( data ):
             open_order_TI = 1  # open order and buy with formula below
             commission_payable = equity_amount_TI * commission  # commission for cryptocurrencies
             equity_amount_TI = ((equity_amount_TI - commission_payable) / data.loc[ index, 'Close' ])
-            # equity_amount_TI = (equity_amount_TI - commission) / data.loc[ index, 'Close' ]  # with FX commission
             data.at[ index, 'Equity_TI' ] = equity_amount_TI  # record amount of money we have
             data.at[ index, 'Currency' ] = 'ETH'  # change to ETH, BTC, EUR, etc.
             order_book_TI = data.loc[ :, [ 'Close', 'Vote', 'Trade_TI', 'Equity_TI', 'Currency' ] ]
@@ -266,7 +264,6 @@ def do_backtest( data ):
             open_order_TI = 0  # close previously opened order and sell with below formula
             commission_payable = equity_amount_TI * commission
             equity_amount_TI = ((equity_amount_TI - commission_payable) * data.loc[ index, 'Close' ])
-            # equity_amount_TI = (equity_amount_TI - commission) * data.loc[ index, 'Close' ]  # with FX commission
             data.at[ index, 'Equity_TI' ] = equity_amount_TI  # record amount of money we have
             data.at[ index, 'Currency' ] = 'USD'
             order_book_TI = data.loc[ :, [ 'Close', 'Vote', 'Trade_TI', 'Equity_TI', 'Currency' ] ]
@@ -277,7 +274,6 @@ def do_backtest( data ):
             open_order_svc = 1  # open order and buy with formula below
             commission_payable = equity_amount_svc * commission  # commission for cryptocurrencies
             equity_amount_svc = ((equity_amount_svc - commission_payable) / data.loc[ index, 'Close' ])
-            # equity_amount_svc = (equity_amount_svc - commission) / data.loc[ index, 'Close' ]  # with FX commission
             data.at[ index, 'Equity_svc' ] = equity_amount_svc  # record amount of money we have
             data.at[ index, 'Currency' ] = 'ETH'  # change to ETH, BTC, EUR, etc.
             order_book_svc = data.loc[ :, [ 'Close', 'm_pred', 'Trade_svc', 'Equity_svc', 'Currency' ] ]
@@ -286,7 +282,6 @@ def do_backtest( data ):
             open_order_svc = 0  # close previously opened order and sell with below formula
             commission_payable = equity_amount_svc * commission
             equity_amount_svc = ((equity_amount_svc - commission_payable) * data.loc[ index, 'Close' ])
-            # equity_amount_svc = (equity_amount_svc - commission) * data.loc[ index, 'Close' ]  # with FX commission
             data.at[ index, 'Equity_svc' ] = equity_amount_svc  # record amount of money we have
             data.at[ index, 'Currency' ] = 'USD'
             order_book_svc = data.loc[ :, [ 'Close', 'm_pred', 'Trade_svc', 'Equity_svc', 'Currency' ] ]
@@ -301,18 +296,14 @@ def do_backtest( data ):
     performance_svc = order_book_svc[
         (order_book_svc[ [ 'Trade_svc' ] ] != 1).all( axis=1 ) ]  # to track only values in USD
 
-    # TODO add winning/losing trades, avg profit/loss per trade
-    # sharpe = 10  # TODO add Sharp Ratio or Sortino ratio
     n_trades = len( order_book.index )  # get number of trades performed
     ann_return = performance.Equity.iloc[ -1 ]  # get last value of the equity column in USD
     pct_ann_return = (ann_return - 100000) / 100000 * 100
 
-    # sharpe = 10  # TODO add Sharp Ratio or Sortino ratio
     n_trades_TI = len( order_book_TI.index )  # get number of trades performed
     ann_return_TI = performance_TI.Equity_TI.iloc[ -1 ]  # get last value of the equity column in USD
     pct_ann_return_TI = (ann_return_TI - 100000) / 100000 * 100
 
-    # sharpe = 10  # TODO add Sharp Ratio or Sortino ratio
     n_trades_svc = len( order_book_svc.index )  # get number of trades performed
     ann_return_svc = performance_svc.Equity_svc.iloc[ -1 ]  # get last value of the equity column in USD
     pct_ann_return_svc = (ann_return_svc - 100000) / 100000 * 100
@@ -398,8 +389,9 @@ X_train, X_test, y_train, y_test, X_val, y_val = get_data_for_ml( df=us_btc, use
 
 # use_prices=True to use 100 price sequences, False - to use Technical indicators
 X_train, X_test, y_train, y_test, X_val, y_val = get_data_for_ml( df=EUR_USD, use_prices=True,
-                                                                  start_testing='2015-10-01', end_testing='2017-06-01',
-                                                                  validation_start='2017-06-02', validation_end=None )
+                                                                  start_testing='2016-01-01', end_testing='2017-06-01',
+                                                                  validation_start='2017-06-02',
+                                                                  validation_end='2018-06-02' )
 
 # specify parameters to try for classifier
 svc_parameters = [
@@ -449,12 +441,12 @@ print( "Best Estimator: " )
 print(clf.best_estimator_)
 
 # compress is used to put all the files into a single pickle file
-joblib.dump( clf.best_estimator_, 'us_btc_ti_1y_1y.pkl', compress=1 )  # save model trained on TI to pkl file
-clf2 = joblib.load( 'svc_prices_mType.pkl' )  # load classifier to a variable
+joblib.dump( clf.best_estimator_, 'eur_usd_prices_2y_1y.pkl', compress=1 )  # save model trained on TI to pkl file
+clf2 = joblib.load( 'eur_usd_prices_2y_1y.pkl' )  # load classifier to a variable
 
 
 # predict validation set
-y_pred2 = clf.predict( X_val )
+y_pred2 = clf2.predict( X_val )
 acc2 = accuracy_score(y_val, y_pred2)
 print('Support Vector Machine Classifier\n {}\n'.format(classification_report( y_val, y_pred2,
                                                                                target_names=[ 'NegativeChange',
@@ -467,9 +459,9 @@ print( "Root Mean Square Error (RMSE): {}".format( math.sqrt( MSE_val ) ) )
 
 
 # do trading__________________________________________________________________________________________
-df_for_trading = make_trading_rules( us_btc )  # create dataset for trading
+df_for_trading = make_trading_rules( EUR_USD )  # create dataset for trading
 
-backtesting_data = df_for_trading[ '2017-09-02': ]  # leave only needed time frame
+backtesting_data = df_for_trading[ '2017-06-02':'2018-06-02' ]  # leave only needed time frame
 len( y_pred2 )
 backtesting_data.shape
 backtesting_data.drop( backtesting_data.tail( 1 ).index, inplace=True )  # drop last n rows
@@ -478,24 +470,3 @@ backtesting_data[ 'm_pred' ] = y_pred2  # attach market direction predictions fr
 
 backtested_df, new_order_book, new_order_book_TI, new_order_book_svc, eq, eq_TI, eq_svc = do_backtest(
     backtesting_data )
-
-"""
-models to try:
-
-EUR-USD (1h)
-1. Tech Indicators -- done
-2. Price Sequences -- done
-
-ETH-USD
-1. Tech Indicators (2h) -- done
-2. Price Sequences (2h) -- done
-3. Tech Indicators (30 min) -- done
-4. Price Sequences (30 min) -- 
-
-BTC-USD
-1. Tech Indicators (2h)
-2. Price Sequences (2h)
-3. Tech Indicators (30 min)
-4. Price Sequences (30 min)
-
-"""
