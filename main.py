@@ -13,10 +13,10 @@ Created on Sat Jul 28 13:57:52 2018
 
 import pandas as pd  # data analysis and manipulation
 import numpy as np
-import matplotlib.pyplot as plt  # visualisation library
+# import matplotlib.pyplot as plt  # visualisation library
 import seaborn as sns  # library for visualisation of statistical data
-from datetime import datetime
-from matplotlib import style
+# from datetime import datetime
+# from matplotlib import style
 from collections import Counter
 from sklearn import svm, cross_validation, neighbors  # cross_validation depreciated in favor of model_selection
 from sklearn.ensemble import VotingClassifier, RandomForestClassifier
